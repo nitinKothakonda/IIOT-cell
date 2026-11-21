@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wafer Cell · MFG598 Group 3</title>
+<script src="/static/chart.umd.js"></script>
+<style>
+  :root { --bg:#f4f5f2; --panel:#fff; --ink:#1c2321; --mute:#6b7470; --line:#dfe2dd;
+          --good:#2f8f5b; --bad:#c8463d; --warn:#c98a12; --accent:#235c8c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141816; --panel:#1d2220; --ink:#e7ebe8;
+          --mute:#98a19c; --line:#2e3532; --accent:#6fa8d6; color-scheme: dark } }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, sans-serif; padding:20px max(16px,3vw) }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; margin-bottom:18px }
+  h1 { font-size:20px; margin:0 } .sub { color:var(--mute) }
+  .pill { margin-left:auto; padding:4px 10px; border-radius:99px; font-weight:600; font-size:12px; border:1px solid var(--line) }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)) }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0 }
+  .k { color:var(--mute); font-size:12px; text-transform:uppercase; letter-spacing:.06em }
+  .v { font-size:34px; font-weight:700; font-variant-numeric:tabular-nums }
+  .big .v { font-size:48px; color:var(--accent) }
+  .f { color:var(--mute); font-size:12px }
+  .row { display:grid; gap:14px; grid-template-columns:2fr 1fr; margin-top:14px }
+  @media (max-width:800px){ .row { grid-template-columns:1fr } }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums }
+  td, th { text-align:left; padding:5px 4px; border-bottom:1px solid var(--line) } th { color:var(--mute); font-weight:500 }
+  .good { color:var(--good); font-weight:600 } .defect { color:var(--bad); font-weight:600 }
+  .alert { padding:6px 0; border-bottom:1px solid var(--line) } .alert.open b { color:var(--bad) }
+  .chartbox { position:relative; height:260px } .chartbox.short { height:200px }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wafer cell OEE</h1><span class="sub">MFG598 · Group 3 · two-arm wafer handling</span>
+  <span class="pill" id="state">—</span>
+</header>
+
+<div class="grid">
+  <div class="card big"><div class="k">OEE</div><div class="v" id="oee">—</div><div class="f">A × P × Q</div></div>
+  <div class="card"><div class="k">Availability</div><div class="v" id="a">—</div><div class="f" id="af">run ÷ (run + down)</div></div>
+  <div class="card"><div class="k">Performance</div><div class="v" id="p">—</div><div class="f">wafers × ideal cycle ÷ run</div></div>
+  <div class="card"><div class="k">Quality</div><div class="v" id="q">—</div><div class="f" id="qf">good ÷ wafers</div></div>
+</div>
+
+<div class="row">
+  <div class="card"><div class="k">Trend</div><div class="chartbox"><canvas id="trend"></canvas></div></div>
+  <div class="card"><div class="k">Alerts</div><div id="alerts" class="f">None</div></div>
+</div>
+<div class="row">
+  <div class="card"><div class="k">Last wafers</div>
+    <table><thead><tr><th>Time</th><th>Wafer</th><th>Arm</th><th>Cycle</th><th>Class</th><th>Result</th></tr></thead><tbody id="parts"></tbody></table></div>
+  <div class="card"><div class="k">Wafer classes</div><div class="chartbox short"><canvas id="mix"></canvas></div>
+    <div class="k" style="margin-top:12px">Per arm</div>
+    <table><thead><tr><th>Arm</th><th>Wafers</th><th>Avg cycle</th><th>Defect</th></tr></thead><tbody id="arms"></tbody></table></div>
+</div>
+
+<script>
+const pct = x => x == null ? "—" : Math.round(x * 100) + "%";
+const t = s => new Date(s).toLocaleTimeString();
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const lines = [["OEE","oee","--accent"],["A","availability","--good"],["P","performance","--warn"],["Q","quality","--bad"]];
+const trend = new Chart(document.getElementById("trend"), { type:"line",
+  data:{ labels:[], datasets: lines.map(([l,_,c]) => ({ label:l, data:[], borderColor:css(c), pointRadius:0, borderWidth: l==="OEE"?3:1.5, tension:.25 })) },
+  options:{ animation:false, maintainAspectRatio:false, scales:{ y:{ min:0, max:1, ticks:{ callback:v => v*100+"%" } } } } });
+const mix = new Chart(document.getElementById("mix"), { type:"bar",
+  data:{ labels:[], datasets:[{ data:[], backgroundColor:[] }] },
+  options:{ animation:false, maintainAspectRatio:false, plugins:{ legend:{ display:false } } } });
+
+async function refresh() {
+  try {
+    const d = await (await fetch("/api/summary")).json();
+    const L = d.latest || {};
+    document.getElementById("oee").textContent = pct(L.oee);
+    document.getElementById("a").textContent = pct(L.availability);
+    document.getElementById("p").textContent = pct(L.performance);
+    document.getElementById("q").textContent = pct(L.quality);
+    document.getElementById("af").textContent = L.run_s != null ? `run ${L.run_s}s · down ${L.down_s}s` : "";
+    document.getElementById("qf").textContent = L.parts != null ? `${L.good} good / ${L.parts} wafers` : "";
+    const st = document.getElementById("state"), e = d.edge;
+    const online = e && e.online && e.age_s < 15;
+    st.textContent = !online ? "EDGE OFFLINE" : L.running ? "RUNNING" : "STOPPED";
+    st.style.color = !online ? css("--mute") : L.running ? css("--good") : css("--bad");
+
+    trend.data.labels = d.trend.map(r => t(r.ts));
+    lines.forEach(([_, k], i) => trend.data.datasets[i].data = d.trend.map(r => r[k]));
+    trend.update();
+    mix.data.labels = d.mix.map(r => r.label);
+    mix.data.datasets[0].data = d.mix.map(r => r.n);
+    mix.data.datasets[0].backgroundColor = d.mix.map(r => r.result === "good" ? css("--good") : r.result === "defect" ? css("--bad") : css("--accent"));
+    mix.update();
+
+    document.getElementById("parts").innerHTML = d.parts.map(r =>
+      `<tr><td>${t(r.ts)}</td><td>${r.wafer_id}</td><td>${r.arm}</td><td>${r.cycle_s.toFixed(1)} s</td><td>${r.label} ${pct(r.confidence)}</td><td class="${r.result}">${r.result}</td></tr>`).join("");
+    document.getElementById("arms").innerHTML = (d.arms || []).map(r =>
+      `<tr><td>${r.arm}</td><td>${r.n}</td><td>${r.avg_cycle} s</td><td>${r.defect_pct}%</td></tr>`).join("");
+    document.getElementById("alerts").innerHTML = d.alerts.length ? d.alerts.map(a =>
+      `<div class="alert ${a.cleared ? "" : "open"}"><b>${a.kind}</b> ${a.message}<br><span class="f">${t(a.ts)}${a.cleared ? " · cleared" : " · open"}</span></div>`).join("") : "None";
+  } catch (err) { document.getElementById("state").textContent = "NO DATA"; }
+}
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>
