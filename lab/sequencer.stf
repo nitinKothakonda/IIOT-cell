@@ -1,0 +1,427 @@
+PROGRAM sequencer
+(* =====================================================================
+   Wafer-handling workcell sequencer - IIoT course (Prof. Ameri)
+
+   Three machines run side by side, so the robots and the conveyor
+   overlap their work:
+
+   CARRIER (Step, 400031)                M1 PRO (M1_State, 400032)
+     0   idle                              0  idle
+     90  home the conveyor                 1  ready check before a pick
+     1   at load point, waiting for M1     2  picking: rack -> hold pose
+     2   M1 clear, check wafer in carrier  3  acknowledge the pick
+     6   conveyor -> pick point            4  holding a wafer above the rack
+     7   vision classifies the wafer       5  ready check before the place
+     8   at pick, Pro 600 -> blue rack     6  placing: hold -> carrier -> home
+     9   at pick, Pro 600 -> black rack    7  acknowledge the place
+     11  conveyor -> load point
+     12  next wafer, or back to idle     PRO 600 (Pro_State, 400033)
+   Steps 3, 4, 5 and 10 are not used.      0  idle
+                                           1  ready check
+                                           2  sorting: carrier -> rack
+                                           3  acknowledge
+
+   START (Start_Cmd) is a request: the PLC clears it as soon as it
+   accepts it, and remembers that a cycle is running in Cycle_Active.
+   A START pressed during a cycle is ignored. Any kind of button works.
+
+   The M1 Pro picks the next wafer while the carrier is away and holds
+   it above the rack. The conveyor moves as soon as a robot reports
+   that it is clear of the carrier (status 3), while the robot is still
+   finishing its job.
+
+   Device handshake (one command/status register pair per robot)
+     PLC writes job N to Cmd   -> bridge writes 1 (busy) and starts
+     (place and sort jobs)        bridge writes 3 (clear) once the arm is
+                                  out of the carrier's way
+     job finished              -> bridge writes 2 (done)
+     PLC writes 0 to Cmd       -> bridge writes 0 (idle)
+     Bridge writes 99 at any time -> fault 1
+   M1 Pro jobs: 1 pick level 1, 3 pick level 2 (both end holding the
+   wafer above the rack), 5 place the held wafer in the carrier.
+   Pro 600 jobs: 1 sort to blue, 4 sort to black.
+
+   Fault codes (Fault_Code, 400051). The state registers keep showing
+   where each machine was until reset.
+     1  a device bridge reported status 99
+     2  no wafer: yellow rack empty when one is needed
+     3  wafer not detected in the carrier after the M1 Pro placed it
+     4  vision found no tape
+     5  carrier did not return to the datum
+     6  M1 Pro did not report done in time
+     7  M1 Pro did not return its status to 0 after a job
+     8  Pro 600 did not report done in time
+     9  Pro 600 did not return its status to 0 after a job
+    10  vision bridge did not write a result in time
+    11  conveyor move or homing did not finish in time
+    12  device not ready: status not 0 when a job is due
+    13  E-stop opened during a cycle
+    14  a device went from busy (1 or 3) back to idle (0) without
+        reporting done (2) - usually a bridge that writes 2 and then 0
+        itself. Faulting here drops the command before the bridge can
+        rerun the motion.
+    15  carrier not empty when the M1 Pro was about to place a wafer
+   ===================================================================== *)
+
+(* ---- 1 Hz heartbeat, for bridges / gateways to check the PLC is alive *)
+T_HB(IN := NOT T_HB.Q, PT := T#1s);
+IF T_HB.Q THEN
+    IF PLC_Heartbeat >= 60000 THEN
+        PLC_Heartbeat := 0;
+    ELSE
+        PLC_Heartbeat := PLC_Heartbeat + 1;
+    END_IF;
+END_IF;
+
+(* ---- time limits; each waiting state sets its own below (T#0s = none) *)
+Step_Limit := T#0s;   Timeout_Code := 0;
+M1_Limit   := T#0s;   M1_TCode     := 0;
+Pro_Limit  := T#0s;   Pro_TCode    := 0;
+
+(* a reset pressed while there is no fault is ignored, so it cannot
+   clear the next fault the moment it happens *)
+IF NOT Fault THEN
+    Fault_Reset := FALSE;
+END_IF;
+
+IF Fault THEN
+    (* hold everything still until reset. The robots finish the motion
+       they were given; their bridges then return to idle. *)
+    Cmd_Word     := 0;
+    Cmd_Word_2   := 0;
+    Move_Abs_Cmd := FALSE;
+    Home_Cmd     := FALSE;
+    IF Fault_Reset THEN
+        (* where the M1 Pro ends up: a pick in progress finishes holding
+           the wafer, a place in progress leaves it in the carrier *)
+        IF M1_State = 2 OR M1_State = 3 THEN
+            M1_Has_Wafer := TRUE;
+        ELSIF M1_State >= 6 THEN
+            M1_Has_Wafer := FALSE;
+        END_IF;
+        IF M1_Has_Wafer THEN
+            M1_State := 4;
+        ELSE
+            M1_State := 0;
+        END_IF;
+        Pro_State      := 0;
+        Fault          := FALSE;
+        Fault_Reset    := FALSE;
+        Fault_Code     := 0;
+        Start_Cmd      := FALSE;  (* operator must press START again *)
+        Cycle_Active   := FALSE;
+        Homed          := FALSE;
+        M1_Job         := 0;
+        M1_Placed      := FALSE;
+        Pro_Clear      := FALSE;
+        Datum_Seen     := FALSE;
+        Step           := 0;
+    END_IF;
+
+ELSIF Status_Word = 99 OR Status_Word_2 = 99 THEN
+    Fault_Code := 1;
+    Fault      := TRUE;
+
+ELSIF Step <> 0 AND NOT EStop_OK THEN
+    Fault_Code := 13;
+    Fault      := TRUE;
+
+ELSE
+
+(* START is only accepted from idle; pressed during a cycle it is dropped *)
+IF Step <> 0 THEN
+    Start_Cmd := FALSE;
+END_IF;
+
+(* =========================== CARRIER =========================== *)
+CASE Step OF
+
+0:  (* idle *)
+    Datum_Seen := FALSE;
+    IF Home_Req THEN
+        Home_Req := FALSE;
+        Step := 90;                     (* HOME pressed on the dashboard *)
+    ELSIF Start_Cmd AND EStop_OK THEN
+        Start_Cmd := FALSE;             (* request accepted *)
+        IF NOT (Yellow_L1 OR Yellow_L2 OR M1_Has_Wafer) THEN
+            Fault_Code := 2;
+            Fault := TRUE;
+        ELSE
+            Cycle_Active := TRUE;
+            IF NOT Homed THEN
+                Step := 90;
+            ELSE
+                Step := 1;
+            END_IF;
+        END_IF;
+    END_IF;
+
+1:  (* carrier at the load point, waiting for the M1 Pro to place a wafer *)
+    IF M1_Placed THEN
+        M1_Placed := FALSE;
+        Step := 2;
+    ELSIF M1_State = 0 AND NOT M1_Has_Wafer
+          AND NOT (Yellow_L1 OR Yellow_L2) THEN
+        Fault_Code := 2;
+        Fault := TRUE;
+    END_IF;
+
+2:  (* M1 Pro is clear: check the wafer landed - 5 s grace for the reed *)
+    Step_Limit   := T#5s;
+    Timeout_Code := 3;
+    IF Disk_In_Carrier THEN
+        Step := 6;
+    END_IF;
+
+6:  (* conveyor -> pick point *)
+    Step_Limit   := T#20s;              (* about 9 s expected *)
+    Timeout_Code := 11;
+    Pos_Cmd := Pos_Pick;
+    Move_Abs_Cmd := TRUE;
+    IF Abs_Done THEN
+        Move_Abs_Cmd  := FALSE;
+        Vision_Result := 0;             (* clear before asking *)
+        Step := 7;
+    END_IF;
+
+7:  (* wait for inspection *)
+    Step_Limit   := T#15s;
+    Timeout_Code := 10;
+    IF Vision_Result = 1 THEN
+        Pass_Count := Pass_Count + 1;
+        Pro_Job := 1;
+        Step := 8;                      (* blue tape -> blue rack *)
+    ELSIF Vision_Result = 2 THEN
+        Reject_Count := Reject_Count + 1;
+        Pro_Job := 4;
+        Step := 9;                      (* green tape -> black rack *)
+    ELSIF Vision_Result = 3 THEN
+        Fault_Code := 4;
+        Fault := TRUE;
+    END_IF;
+
+8, 9:  (* at the pick point until the Pro 600 has lifted the wafer clear *)
+    IF Pro_Clear THEN
+        Pro_Clear := FALSE;
+        Step := 11;
+    END_IF;
+
+11: (* conveyor -> load point. The carrier can settle past the reed
+       once stopped, so record that the datum was crossed. *)
+    Step_Limit   := T#30s;              (* measured 8.5 s *)
+    Timeout_Code := 11;
+    Pos_Cmd := 0.0;
+    Move_Abs_Cmd := TRUE;
+    IF Carrier_Datum THEN
+        Datum_Seen := TRUE;
+    END_IF;
+    IF Abs_Done THEN
+        Move_Abs_Cmd := FALSE;
+        Step := 12;
+    END_IF;
+
+12: (* verify home, then next wafer, or finish once the Pro 600 is done *)
+    IF Datum_Seen OR Carrier_Datum THEN
+        IF M1_Has_Wafer OR M1_State = 1 OR M1_State = 2 OR M1_State = 3
+           OR Yellow_L1 OR Yellow_L2 THEN
+            Datum_Seen := FALSE;
+            Step := 1;                  (* another wafer is on its way *)
+        ELSIF Pro_State = 0 THEN
+            Datum_Seen := FALSE;
+            Cycle_Active := FALSE;      (* all wafers sorted *)
+            Step := 0;
+        END_IF;
+    ELSE
+        Fault_Code := 5;
+        Fault := TRUE;
+    END_IF;
+
+90: (* home the conveyor *)
+    Step_Limit   := T#60s;              (* homing speed not measured - adjust *)
+    Timeout_Code := 11;
+    Home_Cmd := TRUE;
+    IF Homed THEN
+        Home_Cmd := FALSE;
+        IF Cycle_Active THEN
+            Step := 1;                  (* part of a cycle *)
+        ELSE
+            Step := 0;                  (* HOME button only *)
+        END_IF;
+    END_IF;
+
+END_CASE;
+
+(* ============================ M1 PRO ============================ *)
+CASE M1_State OF
+
+0:  (* idle: pick the next wafer as soon as one is staged *)
+    Cmd_Word_2 := 0;
+    IF Cycle_Active AND Step <> 0 AND NOT M1_Has_Wafer
+       AND (Yellow_L1 OR Yellow_L2) THEN
+        M1_State := 1;
+    END_IF;
+
+1:  (* ready check, then choose the level once and latch it - re-reading
+       the sensors during the pick would change the job mid-motion *)
+    Cmd_Word_2 := 0;
+    M1_Limit   := T#10s;
+    M1_TCode   := 12;
+    IF Status_Word_2 = 0 THEN
+        M1_Busy_Seen := FALSE;
+        IF Yellow_L1 THEN
+            M1_Job := 1;
+            M1_State := 2;
+        ELSIF Yellow_L2 THEN
+            M1_Job := 3;
+            M1_State := 2;
+        ELSE
+            M1_State := 0;
+        END_IF;
+    END_IF;
+
+2:  (* picking: rack -> hold pose above the rack *)
+    Cmd_Word_2 := M1_Job;
+    M1_Limit   := T#60s;                (* level 2 is the longest *)
+    M1_TCode   := 6;
+    IF Status_Word_2 = 2 THEN
+        M1_State := 3;
+    ELSIF Status_Word_2 = 1 OR Status_Word_2 = 3 THEN
+        M1_Busy_Seen := TRUE;
+    ELSIF M1_Busy_Seen AND Status_Word_2 = 0 THEN
+        Fault_Code := 14;
+        Fault := TRUE;
+    END_IF;
+
+3:  (* acknowledge the pick *)
+    Cmd_Word_2 := 0;
+    M1_Job     := 0;
+    M1_Limit   := T#10s;
+    M1_TCode   := 7;
+    IF Status_Word_2 = 0 THEN
+        M1_Has_Wafer := TRUE;
+        M1_State := 4;
+    END_IF;
+
+4:  (* holding the wafer until the carrier is back, empty, at the load point *)
+    Cmd_Word_2 := 0;
+    IF Step = 1 THEN
+        IF Disk_In_Carrier THEN
+            Fault_Code := 15;
+            Fault := TRUE;
+        ELSE
+            M1_State := 5;
+        END_IF;
+    END_IF;
+
+5:  (* ready check before the place *)
+    Cmd_Word_2 := 0;
+    M1_Limit   := T#10s;
+    M1_TCode   := 12;
+    IF Status_Word_2 = 0 THEN
+        M1_Busy_Seen := FALSE;
+        M1_State := 6;
+    END_IF;
+
+6:  (* placing: hold pose -> carrier -> home. Status 3 means the arm has
+       withdrawn above the carrier, so the conveyor may go. A bridge that
+       never sends 3 still works: done (2) also counts as clear. *)
+    Cmd_Word_2 := 5;
+    M1_Limit   := T#60s;
+    M1_TCode   := 6;
+    IF (Status_Word_2 = 3 OR Status_Word_2 = 2) AND M1_Has_Wafer THEN
+        M1_Has_Wafer := FALSE;
+        M1_Placed := TRUE;
+    END_IF;
+    IF Status_Word_2 = 2 THEN
+        M1_State := 7;
+    ELSIF Status_Word_2 = 1 OR Status_Word_2 = 3 THEN
+        M1_Busy_Seen := TRUE;
+    ELSIF M1_Busy_Seen AND Status_Word_2 = 0 THEN
+        Fault_Code := 14;
+        Fault := TRUE;
+    END_IF;
+
+7:  (* acknowledge the place *)
+    Cmd_Word_2 := 0;
+    M1_Limit   := T#10s;
+    M1_TCode   := 7;
+    IF Status_Word_2 = 0 THEN
+        M1_State := 0;
+    END_IF;
+
+END_CASE;
+
+(* =========================== PRO 600 =========================== *)
+CASE Pro_State OF
+
+0:  (* idle: sort as soon as the carrier waits at the pick point *)
+    Cmd_Word := 0;
+    IF Step = 8 OR Step = 9 THEN
+        Pro_State := 1;
+    END_IF;
+
+1:  (* ready check *)
+    Cmd_Word  := 0;
+    Pro_Limit := T#10s;
+    Pro_TCode := 12;
+    IF Status_Word = 0 THEN
+        Pro_Busy_Seen  := FALSE;
+        Pro_Clear_Sent := FALSE;
+        Pro_State := 2;
+    END_IF;
+
+2:  (* sorting: carrier -> rack. Status 3 means the wafer is lifted and
+       the arm is clear of the carrier, so the carrier may return. *)
+    Cmd_Word  := Pro_Job;
+    Pro_Limit := T#60s;                 (* measured 22 s *)
+    Pro_TCode := 8;
+    IF (Status_Word = 3 OR Status_Word = 2) AND NOT Pro_Clear_Sent THEN
+        Pro_Clear_Sent := TRUE;
+        Pro_Clear := TRUE;
+    END_IF;
+    IF Status_Word = 2 THEN
+        Pro_State := 3;
+    ELSIF Status_Word = 1 OR Status_Word = 3 THEN
+        Pro_Busy_Seen := TRUE;
+    ELSIF Pro_Busy_Seen AND Status_Word = 0 THEN
+        Fault_Code := 14;
+        Fault := TRUE;
+    END_IF;
+
+3:  (* acknowledge *)
+    Cmd_Word  := 0;
+    Pro_Limit := T#10s;
+    Pro_TCode := 9;
+    IF Status_Word = 0 THEN
+        Pro_State := 0;
+    END_IF;
+
+END_CASE;
+
+END_IF;
+
+(* ---- one timer per machine: restarts whenever that machine changes state *)
+T_Step(IN := (Step = Last_Step) AND NOT Fault, PT := T#10m);
+T_M1(IN := (M1_State = M1_Last) AND NOT Fault, PT := T#10m);
+T_Pro(IN := (Pro_State = Pro_Last) AND NOT Fault, PT := T#10m);
+Last_Step := Step;
+M1_Last   := M1_State;
+Pro_Last  := Pro_State;
+
+IF NOT Fault THEN
+    IF Step_Limit > T#0s AND T_Step.ET >= Step_Limit THEN
+        Fault_Code := Timeout_Code;
+        Fault      := TRUE;
+    ELSIF M1_Limit > T#0s AND T_M1.ET >= M1_Limit THEN
+        Fault_Code := M1_TCode;
+        Fault      := TRUE;
+    ELSIF Pro_Limit > T#0s AND T_Pro.ET >= Pro_Limit THEN
+        Fault_Code := Pro_TCode;
+        Fault      := TRUE;
+    END_IF;
+END_IF;
+
+Step_Mirror      := Step;
+M1_State_Mirror  := M1_State;
+Pro_State_Mirror := Pro_State;
+END_PROGRAM

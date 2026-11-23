@@ -10,7 +10,7 @@ Data pipeline and OEE dashboard for the two-arm handling cell in Dr. Ameri's lab
 | --- | --- |
 | MQTT broker, ingest, database, dashboard | Working, tested on Windows with a simulated source |
 | OEE (Availability x Performance x Quality) and alerts | Working on simulated data |
-| Real reader for the PLC, arms and camera | Not built yet; waiting for the cell owner's CCW and Python files |
+| Real reader for the PLC (`edge/cell_reader.py`) | Built, read-only Modbus TCP; tested against the lab simulator (`lab/plc_sim.py`), not yet on the real cell |
 | Camera capture and model training | Not built yet |
 
 The numbers on the dashboard today come from `edge/wafer_sim.py`, a fake two-arm source. They show that the pipeline works, not how the real cell performs.
@@ -96,6 +96,18 @@ You need Python 3.10 or newer, Mosquitto and PostgreSQL. Use four PowerShell win
 
 Ingest currently logs in as the `edge` user, because the `cloud` user's login was rejected on the Windows broker. `cloud/.env.example` is set up accordingly.
 
+## Real cell data (Modbus TCP, read-only)
+
+The cell owner's PLC serves Modbus TCP on 192.168.10.10:502 (register map in `lab/MbSrvConf.xml`, logic in `lab/sequencer.stf`). `edge/cell_reader.py` only reads. A wafer event is published when the vision verdict counter (Pass_Count blue tape = good, Reject_Count green tape = defect) rises and the Pro 600 has lifted the wafer; run and down time come from the step and Fault registers.
+
+Test without the cell, three windows in the project folder:
+```
+python lab\plc_sim.py --no-console          # the lab's PLC simulator
+python lab\fake_bridges.py                  # stands in for the three robot/vision bridges
+python edge\cell_reader.py --sim --dry-run  # prints events; drop --dry-run to publish to MQTT
+```
+Then press START on the simulated PLC (write coil 3) to run a cycle. On the real cell: `python edge\cell_reader.py --user edge --password <pw> --ideal-cycle <seconds>`.
+
 ## Repository layout
 
 ```
@@ -108,7 +120,7 @@ docs/         dashboard screenshot and setup photos
 
 ## Next steps
 
-1. Add a PLC reader and link test for the Micro850 (EtherNet/IP), using the tag names from the cell's CCW project.
-2. Read the arms with the same scripts the cell owner uses (Python), read-only.
+1. Run `edge/cell_reader.py` on the real cell (Monday lab) and check the numbers against what the cell does.
+2. Measure the real ideal cycle time and pass it with `--ideal-cycle`.
 3. Add the camera capture script, collect labelled images in several sessions, and train a small classifier (MobileNetV2 transfer learning, split by session).
 4. Replace `read_event()` in `edge/wafer_sim.py` with the real reader and model.

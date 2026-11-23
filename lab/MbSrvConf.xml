@@ -1,0 +1,93 @@
+<modbusServer Version="2.0">
+  <modbusRegister name="COILS">
+    <mapping variable="Vac_On" parent="Micro850" dataType="Bool" address="000001" va="0x44b">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Vac_Blow" parent="Micro850" dataType="Bool" address="000002" va="0x44c">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Start_Cmd" parent="Micro850" dataType="Bool" address="000003" va="0x44d">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Fault_Reset" parent="Micro850" dataType="Bool" address="000004" va="0x45f">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Fault" parent="Micro850" dataType="Bool" address="000005" va="0x45e">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="EStop_OK" parent="Micro850" dataType="Bool" address="000006" va="0x459">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Yellow_L1" parent="Micro850" dataType="Bool" address="000007" va="0x450">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Yellow_L2" parent="Micro850" dataType="Bool" address="000008" va="0x451">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Blue_L1" parent="Micro850" dataType="Bool" address="000009" va="0x452">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Blue_L2" parent="Micro850" dataType="Bool" address="000010" va="0x453">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Black_L1" parent="Micro850" dataType="Bool" address="000011" va="0x454">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Black_L2" parent="Micro850" dataType="Bool" address="000012" va="0x455">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Carrier_Datum" parent="Micro850" dataType="Bool" address="000013" va="0x456">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Disk_In_Carrier" parent="Micro850" dataType="Bool" address="000014" va="0x457">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Vac_Present" parent="Micro850" dataType="Bool" address="000015" va="0x458">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Homed" parent="Micro850" dataType="Bool" address="000016" va="0x45b">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+    <mapping variable="Home_Req" parent="Micro850" dataType="Bool" address="000017" va="0x461">
+      <MBVarInfo ElemType="Bool" SubElemType="Any" DataTypeSize="1" />
+    </mapping>
+  </modbusRegister>
+  <modbusRegister name="HOLDING_REGISTERS">
+    <mapping variable="Cmd_Word" parent="Micro850" dataType="UInt" address="400001" va="0x470">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Status_Word" parent="Micro850" dataType="UInt" address="400002" va="0x472">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Cmd_Word_2" parent="Micro850" dataType="UInt" address="400011" va="0x474">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Status_Word_2" parent="Micro850" dataType="UInt" address="400012" va="0x476">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Step_Mirror" parent="Micro850" dataType="Int" address="400031" va="0x466">
+      <MBVarInfo ElemType="Int" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Vision_Result" parent="Micro850" dataType="UInt" address="400041" va="0x47c">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Fault_Code" parent="Micro850" dataType="UInt" address="400051" va="0x480">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Pass_Count" parent="Micro850" dataType="UInt" address="400052" va="0x482">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Reject_Count" parent="Micro850" dataType="UInt" address="400053" va="0x484">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="M1_State_Mirror" parent="Micro850" dataType="Int" address="400032">
+      <MBVarInfo ElemType="Int" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="Pro_State_Mirror" parent="Micro850" dataType="Int" address="400033">
+      <MBVarInfo ElemType="Int" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+    <mapping variable="PLC_Heartbeat" parent="Micro850" dataType="UInt" address="400061">
+      <MBVarInfo ElemType="UInt" SubElemType="Any" DataTypeSize="2" />
+    </mapping>
+  </modbusRegister>
+</modbusServer>
