@@ -7,3 +7,4 @@ broker/*.db
 edge/captures/
 data/images/
 *.tflite
+broker/mosquitto.db*
