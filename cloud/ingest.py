@@ -1,4 +1,4 @@
-"""Cloud ingest: MQTT (Mosquitto) -> PostgreSQL (Supabase), plus simple alerts.
+"""Cloud ingest: MQTT (Mosquitto) -> PostgreSQL (local PostgreSQL), plus simple alerts.
 
 Subscribes to  <prefix>/wafer, <prefix>/oee, <prefix>/status  (JSON from the edge script).
 
@@ -123,7 +123,7 @@ def on_message(client, userdata, msg):
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
             if attempt == 2:
                 print(f"Database unreachable, dropped {msg.topic}: {e}")
-            else:                       # connection to Supabase dropped: reconnect once and retry
+            else:                       # connection to PostgreSQL dropped: reconnect once and retry
                 print("Database connection lost, reconnecting...")
                 try:
                     db = connect_db()

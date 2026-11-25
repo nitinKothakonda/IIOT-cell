@@ -8,12 +8,14 @@ Data pipeline and OEE dashboard for the two-arm handling cell in Dr. Ameri's lab
 
 | Part | State |
 | --- | --- |
-| MQTT broker, ingest, database, dashboard | Working, tested on Windows with a simulated source |
-| OEE (Availability x Performance x Quality) and alerts | Working on simulated data |
-| Real reader for the PLC (`edge/cell_reader.py`) | Built, read-only Modbus TCP; tested against the lab simulator (`lab/plc_sim.py`), not yet on the real cell |
-| Camera capture and model training | Not built yet |
+| MQTT broker, ingest, database, dashboard | Working end to end on Windows with the real cell |
+| OEE (Availability x Performance x Quality) and alerts | Working on real wafer data |
+| Real reader for the PLC (`edge/cell_reader.py`) | Running on the real cell, read-only Modbus TCP; optional CSV event log (`--log`) |
+| Auto-start loop (`lab/auto_start.py`) | Restarts the cell when a wafer is put back on the yellow rack |
+| Data export and fault log | Export menu on the dashboard (xlsx, json, csv, png, jpg) and a Fault log page at `/faults` |
+| Camera capture and model training | Not built; the cell's own HSV vision (blue/green tape) is used instead |
 
-The numbers on the dashboard today come from `edge/wafer_sim.py`, a fake two-arm source. They show that the pipeline works, not how the real cell performs.
+Real runs: about 18 s per wafer transfer and about 36 s wafer to wafer, which is the ideal cycle we pass to the reader. `edge/wafer_sim.py` and `lab/plc_sim.py` remain for testing without the cell.
 
 ## The cell
 
@@ -31,15 +33,17 @@ The cell also has a conveyor with a 3D-printed carrier cradle and three 3D-print
 ## Architecture
 
 ```
-devices (arms, PLC, camera)   simulated today
+devices (arms, PLC, camera)   Micro850 PLC over Modbus TCP
         |
-edge script (Python)          edge/wafer_sim.py, read_event() is the part that will change
+edge script (Python)          edge/cell_reader.py (read-only; wafer_sim.py for tests)
         |  publish, QoS 1
 MQTT broker (Mosquitto)       topics mfg598/group3/wafer/{wafer,oee,status}
         |  subscribe, QoS 1
 ingest (cloud/ingest.py)  ->  PostgreSQL (cloud/schema.sql)
                                   |
                               dashboard (dashboard/app.py, http://localhost:5000)
+                                  |-- /faults  fault log (stoppages rebuilt from OEE history)
+                                  |-- /export  xlsx, json, csv
 ```
 
 ### Wafer event
@@ -100,27 +104,37 @@ Ingest currently logs in as the `edge` user, because the `cloud` user's login wa
 
 The cell owner's PLC serves Modbus TCP on 192.168.10.10:502 (register map in `lab/MbSrvConf.xml`, logic in `lab/sequencer.stf`). `edge/cell_reader.py` only reads. A wafer event is published when the vision verdict counter (Pass_Count blue tape = good, Reject_Count green tape = defect) rises and the Pro 600 has lifted the wafer; run and down time come from the step and Fault registers.
 
+Run on the real cell, from the project root, with the cell's bridges (`lab/bridges`) already running:
+```
+python edge\cell_reader.py --user edge --password <pw> --ideal-cycle 36 --log logs\run1.csv
+python lab\auto_start.py --max 3        # optional: restart the cell for N wafers; omit --max to loop
+```
+`--log` writes every state change and wafer event to a CSV with UTC and local timestamps. `lab/auto_start.py` only writes the Start coil, when the cell is idle with a wafer on the yellow rack and no fault.
+
 Test without the cell, three windows in the project folder:
 ```
 python lab\plc_sim.py --no-console          # the lab's PLC simulator
 python lab\fake_bridges.py                  # stands in for the three robot/vision bridges
 python edge\cell_reader.py --sim --dry-run  # prints events; drop --dry-run to publish to MQTT
 ```
-Then press START on the simulated PLC (write coil 3) to run a cycle. On the real cell: `python edge\cell_reader.py --user edge --password <pw> --ideal-cycle <seconds>`.
+
+## Export and fault log
+
+The dashboard has an Export menu (xlsx, json, csv, png, jpg, plus the trend and class charts) and a **Fault log** page at http://localhost:5000/faults. The page rebuilds stoppages from the OEE history (down time rising while the PLC is faulted), so it costs the cell nothing. Fault codes are not stored live; they come from `cloud/fault_annotations.json`, which labels known periods, and other stops show "cause not recorded". The same data can be exported offline with `python cloud\export_data.py`, which writes the `exports/` folder (git-ignored).
 
 ## Repository layout
 
 ```
 broker/       Mosquitto config (mq.conf)
-cloud/        ingest.py, schema.sql, .env.example
-dashboard/    Flask app and page
-edge/         wafer_sim.py (fake source), oee.py
+cloud/        ingest.py, schema.sql, export_data.py, fault_annotations.json, .env.example
+dashboard/    Flask app, dashboard and fault log pages
+edge/         cell_reader.py (real cell), wafer_sim.py (fake source), oee.py
+lab/          cell owner's bridges (lab/bridges), auto_start.py, PLC simulator
 docs/         dashboard screenshot and setup photos
 ```
 
 ## Next steps
 
-1. Run `edge/cell_reader.py` on the real cell (Monday lab) and check the numbers against what the cell does.
-2. Measure the real ideal cycle time and pass it with `--ideal-cycle`.
-3. Add the camera capture script, collect labelled images in several sessions, and train a small classifier (MobileNetV2 transfer learning, split by session).
-4. Replace `read_event()` in `edge/wafer_sim.py` with the real reader and model.
+1. Store PLC fault codes live (reader publishes alerts, ingest saves them) instead of using the annotation file.
+2. Investigate the intermittent fault 3 (wafer not in carrier): carrier placement and the level-2 sensor.
+3. Measure the ideal cycle over longer runs.
