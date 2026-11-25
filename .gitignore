@@ -8,3 +8,5 @@ edge/captures/
 data/images/
 *.tflite
 broker/mosquitto.db*
+exports/
+logs/

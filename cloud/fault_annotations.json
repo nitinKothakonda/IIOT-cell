@@ -1,0 +1,8 @@
+[
+  {
+    "from_utc": "2026-11-25T21:35:00+00:00",
+    "to_utc": "2026-11-25T22:40:00+00:00",
+    "code": 3,
+    "source": "reader terminal log: 5 fault alerts in this period, all code 3 (not stored live)"
+  }
+]

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wafer Cell · MFG598 Group 3</title>
 <script src="/static/chart.umd.js"></script>
+<script src="/static/html2canvas.min.js"></script>
 <style>
   :root { --bg:#f4f5f2; --panel:#fff; --ink:#1c2321; --mute:#6b7470; --line:#dfe2dd;
           --good:#2f8f5b; --bad:#c8463d; --warn:#c98a12; --accent:#235c8c; }
@@ -14,6 +15,8 @@
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, sans-serif; padding:20px max(16px,3vw) }
   header { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; margin-bottom:18px }
   h1 { font-size:20px; margin:0 } .sub { color:var(--mute) }
+  .exp { display:flex; gap:6px } .exp select { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:5px 8px; font:inherit; cursor:pointer }
+  .lnk { color:var(--accent); text-decoration:none; font-weight:600; font-size:13px }
   .pill { margin-left:auto; padding:4px 10px; border-radius:99px; font-weight:600; font-size:12px; border:1px solid var(--line) }
   .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)) }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0 }
@@ -34,6 +37,26 @@
 <header>
   <h1>Wafer cell OEE</h1><span class="sub">MFG598 · Group 3 · two-arm wafer handling</span>
   <span class="pill" id="state">—</span>
+  <a class="lnk noshot" href="/faults">Fault log →</a>
+  <span class="exp noshot">
+    <select id="range" title="Time range for the data exports">
+      <option value="all">All data</option><option value="1h">Last hour</option><option value="24h">Last 24 hours</option>
+    </select>
+    <select id="exp" title="Export">
+      <option value="">Export…</option>
+      <optgroup label="Data (uses the range)">
+        <option value="xlsx">Excel (.xlsx), all sheets</option>
+        <option value="json">JSON (.json), all tables</option>
+        <option value="csv">CSV (.csv), wafers</option>
+      </optgroup>
+      <optgroup label="Image">
+        <option value="png">Whole dashboard (PNG)</option>
+        <option value="jpg">Whole dashboard (JPG)</option>
+        <option value="trend">Trend chart (PNG)</option>
+        <option value="classes">Wafer classes chart (PNG)</option>
+      </optgroup>
+    </select>
+  </span>
 </header>
 
 <div class="grid">
@@ -98,6 +121,34 @@ async function refresh() {
       `<div class="alert ${a.cleared ? "" : "open"}"><b>${a.kind}</b> ${a.message}<br><span class="f">${t(a.ts)}${a.cleared ? " · cleared" : " · open"}</span></div>`).join("") : "None";
   } catch (err) { document.getElementById("state").textContent = "NO DATA"; }
 }
+
+// ---- export menu ----
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+function save(url, name) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+function chartImage(chart, name) {              // chart on a solid background, so it also reads in dark mode
+  const src = chart.canvas, c = document.createElement("canvas");
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext("2d"); g.fillStyle = css("--panel"); g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0);
+  save(c.toDataURL("image/png"), name);
+}
+async function pageImage(type, ext) {
+  if (!window.html2canvas) { alert("Image export needs static/html2canvas.min.js"); return; }
+  const canvas = await html2canvas(document.body, { backgroundColor: css("--bg"), scale: 2,
+    ignoreElements: e => e.classList && e.classList.contains("noshot"),
+    onclone: d => { const st = d.createElement("style"); st.textContent = "*{font-variant-numeric:normal !important}"; d.head.appendChild(st); } });
+  save(canvas.toDataURL(type, 0.92), `wafer-dashboard-${stamp()}.${ext}`);
+}
+document.getElementById("exp").addEventListener("change", async e => {
+  const v = e.target.value; e.target.value = "";
+  const range = document.getElementById("range").value;
+  if (["xlsx", "json", "csv"].includes(v)) location.href = `/export/${v}?range=${range}`;
+  else if (v === "png") await pageImage("image/png", "png");
+  else if (v === "jpg") await pageImage("image/jpeg", "jpg");
+  else if (v === "trend") chartImage(trend, `trend-${stamp()}.png`);
+  else if (v === "classes") chartImage(mix, `wafer-classes-${stamp()}.png`);
+});
+
 refresh(); setInterval(refresh, 3000);
 </script>
 </body>

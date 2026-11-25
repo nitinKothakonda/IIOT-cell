@@ -12,6 +12,7 @@ What it turns into events (register map: lab/plc_sim.py, MbSrvConf.xml):
 
   python cell_reader.py --sim --dry-run                 # against lab/plc_sim.py, print only
   python cell_reader.py --host 192.168.10.10 --user edge --password <pw>   # real cell
+  add  --log logs\\run.csv  to also record every state change with timestamps (raw detail)
 """
 from __future__ import annotations
 
@@ -112,6 +113,7 @@ def main():
                     help="ideal seconds per wafer for the Performance figure (measure it in the lab)")
     ap.add_argument("--poll", type=float, default=0.2)
     ap.add_argument("--dry-run", action="store_true", help="print instead of publishing")
+    ap.add_argument("--log", help="CSV file recording every state change with timestamps (raw detail)")
     a = ap.parse_args()
     host = a.host or ("127.0.0.1" if a.sim else "192.168.10.10")
     port = a.port or (5020 if a.sim else 502)
@@ -133,6 +135,33 @@ def main():
 
     t = Tracker(a.ideal_cycle)
     last_oee = 0.0
+
+    logf = logw = None
+    last_key = None
+    if a.log:
+        import csv, os
+        fresh = not os.path.exists(a.log) or os.path.getsize(a.log) == 0
+        logf = open(a.log, "a", newline="", encoding="utf-8")
+        logw = csv.writer(logf)
+        if fresh:
+            logw.writerow(["time_utc", "time_local", "step", "m1_state", "pro600_state", "vision_result",
+                           "fault", "fault_code", "fault_text", "pass_count", "reject_count", "estop_ok", "event"])
+
+    def log_row(s, event=""):
+        """Append a row when the state changed (heartbeat ignored) or an event happened."""
+        nonlocal last_key
+        if not logw or not s:
+            return
+        key = tuple(v for k, v in s.items() if k != "heartbeat")
+        if key == last_key and not event:
+            return
+        last_key = key
+        wall = datetime.now(timezone.utc)
+        logw.writerow([wall.isoformat(), wall.astimezone().strftime("%Y-%m-%d %H:%M:%S"), s["step"], s["m1"],
+                       s["pro"], s["vision"], int(s["fault"]), s["fault_code"],
+                       FAULTS.get(s["fault_code"], "") if s["fault"] else "", s["passed"], s["rejected"],
+                       int(s["estop_ok"]), event])
+        logf.flush()
     try:
         while True:
             s = None
@@ -144,12 +173,16 @@ def main():
             now = time.monotonic()
             if s:
                 t.update(s, now)
+                log_row(s)
                 if now - last_oee > 5 and t.prev:
                     t.out.append(("oee", t.oee_msg())); last_oee = now
             for topic, payload in t.out:
                 if topic == "alert":
                     print("ALERT", payload)
+                    log_row(t.prev, f"ALERT fault {payload['code']}: {payload['text']}")
                     continue
+                if topic == "wafer":
+                    log_row(t.prev, f"WAFER {payload['wafer_id']} {payload['result']} cycle {payload['cycle_s']} s")
                 print(topic, json.dumps(payload) if a.dry_run or topic == "wafer" else "")
                 if c:
                     c.publish(f"{PREFIX}/{topic}", json.dumps(payload), qos=1)
@@ -160,6 +193,8 @@ def main():
     if c:
         c.publish(f"{PREFIX}/status", json.dumps({"online": False}), qos=1, retain=True).wait_for_publish()
         c.loop_stop()
+    if logf:
+        logf.close()
     plc.close()
 
 
