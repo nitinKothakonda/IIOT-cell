@@ -57,11 +57,11 @@ BACKENDS = ([("DSHOW", cv2.CAP_DSHOW),
 
 # ROI over the disk at the pick point: x, y, width, height in pixels.
 # Set this in --setup mode.
-ROI = [220, 140, 200, 200]
+ROI = [215, 210, 245, 225]
 
 # HSV ranges. OpenCV hue is 0-179, not 0-359.
 GREEN = [((78, 90, 120), (95, 255, 255))]
-BLUE  = [((97, 120, 200), (125, 255, 255))]
+BLUE  = [((97, 120, 120), (125, 255, 255))]
 RED   = [((0, 80, 60), (10, 255, 255)),        # red wraps the hue circle,
          ((170, 80, 60), (179, 255, 255))]     # so it needs two ranges
 

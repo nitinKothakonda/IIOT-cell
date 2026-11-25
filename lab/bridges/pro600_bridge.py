@@ -16,6 +16,7 @@ The robot motion is already written (pro600_motion.py). Your job is the
 communication with the PLC: complete every TODO in this file.
 """
 import argparse
+import threading
 import time
 
 from pymodbus.client import ModbusTcpClient
@@ -88,8 +89,8 @@ def handle_job(plc, arm, cmd):
         #         of BLOW_TIME seconds (Vac_Blow on, wait, Vac_Blow off).
         set_coil(plc, VAC_ON, False)
         set_coil(plc, VAC_BLOW, True)
-        time.sleep(BLOW_TIME)
-        set_coil(plc, VAC_BLOW, False)
+        time.sleep(0.3)  # let the blow start before the arm lifts
+        threading.Timer(BLOW_TIME, lambda: set_coil(plc, VAC_BLOW, False)).start()
         print("    released")
 
     def on_clear():
