@@ -1,0 +1,8 @@
+# Lab 1 - install with:  pip install -r requirements.txt
+# Tested with pymodbus 3.8.6 and 3.16.1. Use the same version as the cell laptop.
+pymodbus>=3.6,<4
+
+# Only needed on the cell laptop (real robots and camera):
+#   pymycobot          Pro 600
+#   opencv-python      inspection camera
+#   numpy
